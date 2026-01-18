@@ -153,6 +153,8 @@ create_directories() {
     
     chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
     chown -R "$SERVICE_USER:$SERVICE_USER" "$LOG_DIR"
+    # Config dir: root owns it, s3crypt group can read, others have no access
+    chown root:"$SERVICE_USER" "$CONFIG_DIR"
     chmod 750 "$CONFIG_DIR"
     
     success "Directories created"
