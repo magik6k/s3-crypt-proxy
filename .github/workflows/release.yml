@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build binaries
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          
+          # Linux amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/s3-crypt-proxy-linux-amd64 ./cmd/s3-crypt-proxy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/memkey-server-linux-amd64 ./cmd/memkey-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/memkey-admin-linux-amd64 ./cmd/memkey-admin
+          
+          # Linux arm64
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/s3-crypt-proxy-linux-arm64 ./cmd/s3-crypt-proxy
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/memkey-server-linux-arm64 ./cmd/memkey-server
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/memkey-admin-linux-arm64 ./cmd/memkey-admin
+          
+          # macOS amd64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/memkey-admin-darwin-amd64 ./cmd/memkey-admin
+          
+          # macOS arm64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/memkey-admin-darwin-arm64 ./cmd/memkey-admin
+          
+          # Windows amd64 (admin tool only)
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X main.version=$VERSION" -o dist/memkey-admin-windows-amd64.exe ./cmd/memkey-admin
+          
+          # Create archives
+          cd dist
+          tar czf s3-crypt-proxy-linux-amd64.tar.gz s3-crypt-proxy-linux-amd64 memkey-server-linux-amd64 memkey-admin-linux-amd64
+          tar czf s3-crypt-proxy-linux-arm64.tar.gz s3-crypt-proxy-linux-arm64 memkey-server-linux-arm64 memkey-admin-linux-arm64
+          tar czf memkey-admin-darwin-amd64.tar.gz memkey-admin-darwin-amd64
+          tar czf memkey-admin-darwin-arm64.tar.gz memkey-admin-darwin-arm64
+          zip memkey-admin-windows-amd64.zip memkey-admin-windows-amd64.exe
+          
+          # Generate checksums
+          sha256sum *.tar.gz *.zip > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') || contains(github.ref, '-alpha') }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt

@@ -1,0 +1,61 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+    - gosec
+    - prealloc
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: false
+  
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Too strict for this project
+  
+  gosec:
+    excludes:
+      - G104  # Audit errors not checked (we handle this explicitly)
+      - G304  # File path from variable (needed for config loading)
+  
+  misspell:
+    locale: US
+
+issues:
+  exclude-rules:
+    # Ignore long lines in tests
+    - path: _test\.go
+      linters:
+        - lll
+    
+    # Ignore magic numbers in tests
+    - path: _test\.go
+      linters:
+        - gomnd
+    
+    # Ignore error return in test cleanup
+    - path: _test\.go
+      text: "Error return value of .* is not checked"
+    
+    # Allow sha256.Sum256 without error check (it doesn't return error)
+    - text: "Error return value of `sha256.Sum256` is not checked"
+      linters:
+        - errcheck
+
+  max-issues-per-linter: 0
+  max-same-issues: 0

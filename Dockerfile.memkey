@@ -13,22 +13,20 @@ RUN go mod download
 # Copy source
 COPY . .
 
-# Build all binaries
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /s3-crypt-proxy ./cmd/s3-crypt-proxy
+# Build memkey-server
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /memkey-server ./cmd/memkey-server
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /memkey-admin ./cmd/memkey-admin
 
-# Runtime stage for s3-crypt-proxy
+# Runtime stage
 FROM scratch
 
 # Copy CA certificates for HTTPS
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
 # Copy binary
-COPY --from=builder /s3-crypt-proxy /s3-crypt-proxy
+COPY --from=builder /memkey-server /memkey-server
 
-# Expose ports (proxy: 8080, admin: 9090)
-EXPOSE 8080 9090
+# Expose port
+EXPOSE 7070
 
 # Run
-ENTRYPOINT ["/s3-crypt-proxy"]
+ENTRYPOINT ["/memkey-server"]
