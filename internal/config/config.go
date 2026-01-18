@@ -33,8 +33,23 @@ type Config struct {
 	// TLS configuration
 	TLS TLSConfig `yaml:"tls"`
 
+	// Memkey configuration for fetching encryption key
+	Memkey MemkeyConfig `yaml:"memkey"`
+
 	// Logging configuration
 	LogLevel string `yaml:"log_level"`
+}
+
+// MemkeyConfig holds memkey server connection settings.
+type MemkeyConfig struct {
+	// Endpoint is the memkey server URL (e.g., http://127.0.0.1:7070)
+	Endpoint string `yaml:"endpoint"`
+
+	// PollInterval is how often to check for key availability (default 5s)
+	PollInterval string `yaml:"poll_interval"`
+
+	// InsecureSkipVerify skips TLS verification for memkey server
+	InsecureSkipVerify bool `yaml:"insecure_skip_verify"`
 }
 
 // BackendConfig holds S3 backend connection settings.
@@ -99,6 +114,9 @@ func DefaultConfig() *Config {
 		},
 		Encryption: EncryptionConfig{
 			ChunkSize: 4 * 1024 * 1024, // 4MB
+		},
+		Memkey: MemkeyConfig{
+			PollInterval: "5s",
 		},
 		LogLevel: "info",
 	}
@@ -179,6 +197,17 @@ func LoadFromEnv() *Config {
 	}
 	if v := os.Getenv("S3CP_TLS_KEY"); v != "" {
 		cfg.TLS.KeyFile = v
+	}
+
+	// Memkey settings
+	if v := os.Getenv("S3CP_MEMKEY_ENDPOINT"); v != "" {
+		cfg.Memkey.Endpoint = v
+	}
+	if v := os.Getenv("S3CP_MEMKEY_POLL_INTERVAL"); v != "" {
+		cfg.Memkey.PollInterval = v
+	}
+	if v := os.Getenv("S3CP_MEMKEY_INSECURE"); v != "" {
+		cfg.Memkey.InsecureSkipVerify = parseBool(v)
 	}
 
 	// Log level

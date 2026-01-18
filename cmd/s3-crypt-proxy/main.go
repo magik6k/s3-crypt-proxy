@@ -3,8 +3,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -140,6 +143,21 @@ func main() {
 		errChan <- adminHTTPServer.ListenAndServe()
 	}()
 
+	// Start memkey poller if configured
+	var memkeyCancel context.CancelFunc
+	if cfg.Memkey.Endpoint != "" {
+		var memkeyCtx context.Context
+		memkeyCtx, memkeyCancel = context.WithCancel(context.Background())
+
+		pollInterval := 5 * time.Second
+		if d, err := time.ParseDuration(cfg.Memkey.PollInterval); err == nil {
+			pollInterval = d
+		}
+
+		go pollMemkey(memkeyCtx, cfg.Memkey.Endpoint, cfg.Memkey.InsecureSkipVerify, km, m, pollInterval, logger)
+		logger.Info("memkey poller started", "endpoint", cfg.Memkey.Endpoint, "interval", pollInterval)
+	}
+
 	// Wait for shutdown signal
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
@@ -151,6 +169,11 @@ func main() {
 		}
 	case sig := <-sigChan:
 		logger.Info("received shutdown signal", "signal", sig)
+	}
+
+	// Stop memkey poller
+	if memkeyCancel != nil {
+		memkeyCancel()
 	}
 
 	// Graceful shutdown
@@ -171,4 +194,101 @@ func main() {
 	km.ClearKey()
 
 	logger.Info("shutdown complete")
+}
+
+// pollMemkey periodically fetches the encryption key from the memkey server
+func pollMemkey(ctx context.Context, endpoint string, insecure bool, km *crypto.KeyManager, m *metrics.Metrics, interval time.Duration, logger *slog.Logger) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			// #nosec G402 - InsecureSkipVerify is configurable for self-signed certs
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: insecure, //nolint:gosec
+			},
+		},
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	// Try immediately on start
+	fetchKey(client, endpoint, km, m, logger)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !km.IsLoaded() {
+				fetchKey(client, endpoint, km, m, logger)
+			}
+		}
+	}
+}
+
+func fetchKey(client *http.Client, endpoint string, km *crypto.KeyManager, m *metrics.Metrics, logger *slog.Logger) {
+	// Check memkey server status
+	resp, err := client.Get(endpoint + "/status")
+	if err != nil {
+		logger.Debug("memkey server not reachable", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		logger.Debug("memkey server returned error", "status", resp.StatusCode)
+		return
+	}
+
+	var status struct {
+		KeyLoaded bool `json:"key_loaded"`
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		logger.Debug("failed to read memkey status", "error", err)
+		return
+	}
+
+	if err := json.Unmarshal(body, &status); err != nil {
+		logger.Debug("failed to parse memkey status", "error", err)
+		return
+	}
+
+	if !status.KeyLoaded {
+		logger.Debug("memkey server has no key loaded")
+		return
+	}
+
+	// Fetch the key
+	keyResp, err := client.Get(endpoint + "/key/raw")
+	if err != nil {
+		logger.Debug("failed to fetch key from memkey", "error", err)
+		return
+	}
+	defer keyResp.Body.Close()
+
+	if keyResp.StatusCode != http.StatusOK {
+		logger.Debug("memkey key fetch failed", "status", keyResp.StatusCode)
+		return
+	}
+
+	keyData, err := io.ReadAll(keyResp.Body)
+	if err != nil {
+		logger.Debug("failed to read key data", "error", err)
+		return
+	}
+
+	if len(keyData) != 32 {
+		logger.Error("invalid key size from memkey", "size", len(keyData))
+		return
+	}
+
+	if err := km.LoadKey(keyData); err != nil {
+		logger.Error("failed to load key", "error", err)
+		return
+	}
+
+	m.SetKeyLoaded(true)
+	logger.Info("encryption key loaded from memkey server")
 }

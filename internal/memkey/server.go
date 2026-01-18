@@ -57,6 +57,7 @@ func NewHTTPServer(cfg *HTTPServerConfig) *HTTPServer {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/challenge", hs.handleChallenge)
 	mux.HandleFunc("/key", hs.handleKey)
+	mux.HandleFunc("/key/raw", hs.handleKeyRaw)
 	mux.HandleFunc("/status", hs.handleStatus)
 	mux.HandleFunc("/health", hs.handleHealth)
 
@@ -183,6 +184,26 @@ func (hs *HTTPServer) handleKey(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Master key loaded successfully, fingerprint: %s", resp.KeyFingerprint)
 	hs.sendJSON(w, http.StatusOK, resp)
+}
+
+// handleKeyRaw handles GET /key/raw - returns raw key bytes for local proxy
+// This endpoint should only be accessible from localhost
+func (hs *HTTPServer) handleKeyRaw(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		hs.sendError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	key, err := hs.server.GetKey()
+	if err != nil {
+		hs.sendError(w, http.StatusServiceUnavailable, "key not loaded")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Length", "32")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(key)
 }
 
 // handleStatus handles GET /status
