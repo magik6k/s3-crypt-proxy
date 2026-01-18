@@ -543,6 +543,13 @@ print_summary() {
     fi
     echo "  Access Key: ${CLIENT_ACCESS_KEY}"
     echo "  Secret Key: ${CLIENT_SECRET_KEY}"
+    if [ -n "$ALLOWED_BUCKETS" ]; then
+        echo "  Allowed Buckets: ${ALLOWED_BUCKETS}"
+    fi
+    echo
+    echo -e "${BLUE}Key Transfer:${NC}"
+    echo "  Unix Socket: /run/memkey/memkey.sock (proxy <-> memkey-server)"
+    echo "  Admin Port:  ${MEMKEY_PORT} (memkey-admin -> memkey-server)"
     echo
     echo -e "${YELLOW}═══════════════════════════════════════════════════════════════${NC}"
     echo -e "${YELLOW}                    IMPORTANT: Key Deployment                   ${NC}"

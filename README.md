@@ -20,8 +20,10 @@ A stateless, transparent S3 encryption proxy designed for Proxmox Backup Server 
 │   Client    │     │   (encrypts)    │     │ (encrypted) │
 └─────────────┘     └────────┬────────┘     └─────────────┘
                              │
+                    Unix socket (/run/memkey/memkey.sock)
+                             │
                     ┌────────▼────────┐
-                    │  memkey-server  │
+                    │  memkey-server  │◀──── HTTPS (admin protocol)
                     │ (holds key in   │
                     │    memory)      │
                     └────────▲────────┘
@@ -32,6 +34,11 @@ A stateless, transparent S3 encryption proxy designed for Proxmox Backup Server 
                     │  secure channel)│
                     └─────────────────┘
 ```
+
+**Key Transfer Security:**
+- Proxy fetches the encryption key via **Unix socket** (filesystem permissions)
+- Admin delivers key via **HTTPS** with challenge-response authentication
+- The `/key/raw` endpoint is only available on the Unix socket, not HTTP
 
 ## Quick Start
 
@@ -69,14 +76,14 @@ go build -o bin/memkey-admin ./cmd/memkey-admin
 ### Proxy Configuration (`config.yaml`)
 
 ```yaml
-proxy:
-  listen_addr: "0.0.0.0:8080"
-  tls_enabled: true
-  tls_cert: "/etc/s3-crypt-proxy/proxy.crt"
-  tls_key: "/etc/s3-crypt-proxy/proxy.key"
+listen_addr: "0.0.0.0:8080"
+admin_listen_addr: "127.0.0.1:8081"
+
+tls:
+  cert_file: "/etc/s3-crypt-proxy/proxy.crt"
+  key_file: "/etc/s3-crypt-proxy/proxy.key"
 
 admin:
-  listen_addr: "127.0.0.1:9090"
   token: "your-admin-token"
 
 backend:
@@ -85,7 +92,7 @@ backend:
   access_key: "AKIAIOSFODNN7EXAMPLE"
   secret_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
   path_style: false        # Set true for MinIO
-  skip_tls_verify: false
+  insecure_skip_verify: false
 
 client:
   access_key: "proxy-client-key"
@@ -94,10 +101,15 @@ client:
 encryption:
   chunk_size: 4194304  # 4MB
 
-# Key source
-key_source: "memkey"
+# Restrict bucket access (recommended)
+allowed_buckets:
+  - "my-pbs-bucket"
+
+# Key source: memkey server
 memkey:
-  endpoint: "http://127.0.0.1:7070"
+  socket_path: "/run/memkey/memkey.sock"  # Unix socket (secure)
+  endpoint: "http://127.0.0.1:7070"       # HTTP for status checks
+  poll_interval: "5s"
 ```
 
 ### Memkey Server Configuration (`memkey.yaml`)
@@ -105,7 +117,11 @@ memkey:
 ```yaml
 server:
   listen_addr: "127.0.0.1:7070"
-  tls_enabled: false
+  tls_enabled: true
+  tls_cert: "/etc/s3-crypt-proxy/memkey.crt"
+  tls_key: "/etc/s3-crypt-proxy/memkey.key"
+  # Unix socket for secure local key transfer to proxy
+  unix_socket_path: "/run/memkey/memkey.sock"
 
 identity:
   # Ed25519 seed (hex). Generate with: memkey-server -generate-identity
@@ -116,6 +132,45 @@ security:
   max_failed_attempts: 5
   lockout_duration: "5m"
 ```
+
+### Environment Variables
+
+All configuration can be set via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `S3CP_LISTEN_ADDR` | Proxy listen address |
+| `S3CP_ADMIN_LISTEN_ADDR` | Admin API address |
+| `S3CP_BACKEND_ENDPOINT` | S3 backend URL |
+| `S3CP_BACKEND_REGION` | S3 region |
+| `S3CP_BACKEND_ACCESS_KEY` | Backend access key |
+| `S3CP_BACKEND_SECRET_KEY` | Backend secret key |
+| `S3CP_BACKEND_PATH_STYLE` | Use path-style URLs |
+| `S3CP_BACKEND_INSECURE` | Skip TLS verification |
+| `S3CP_CLIENT_ACCESS_KEY` | Client access key |
+| `S3CP_CLIENT_SECRET_KEY` | Client secret key |
+| `S3CP_ADMIN_TOKEN` | Admin API bearer token |
+| `S3CP_ALLOWED_BUCKETS` | Comma-separated allowed buckets |
+| `S3CP_MEMKEY_SOCKET` | Memkey Unix socket path |
+| `S3CP_MEMKEY_ENDPOINT` | Memkey HTTP endpoint |
+| `S3CP_LOG_LEVEL` | Log level (debug, info, warn, error) |
+
+## Bucket Access Control
+
+The `allowed_buckets` configuration restricts which S3 buckets clients can access:
+
+```yaml
+allowed_buckets:
+  - "pbs-backup-bucket"
+  - "pbs-archive-bucket"
+```
+
+When configured:
+- **ListBuckets** returns only the allowed buckets (no backend call needed)
+- **All other operations** return 403 Forbidden for non-allowed buckets
+- This avoids needing ListBuckets permission on the backend
+
+If `allowed_buckets` is empty or not set, all buckets are accessible (not recommended for production).
 
 ## Key Management
 
@@ -315,6 +370,8 @@ Each section includes a Poly1305 authentication tag for tamper detection.
 - Use TLS for all network communication
 - Restrict memkey-server to localhost or private network
 - Rotate admin workstation key periodically
+- Configure `allowed_buckets` to restrict access
+- Use Unix socket for proxy-memkey communication (default)
 
 ## Prometheus Metrics
 
