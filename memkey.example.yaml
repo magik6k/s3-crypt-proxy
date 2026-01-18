@@ -1,0 +1,31 @@
+# Memkey Server Configuration Example
+# Copy to memkey.yaml and customize
+
+server:
+  # HTTP listen address for admin protocol (challenge-response key delivery)
+  listen_addr: "127.0.0.1:7070"
+  
+  # TLS configuration (recommended for remote admin access)
+  tls_enabled: false
+  tls_cert: ""
+  tls_key: ""
+  
+  # Unix socket for secure local key transfer to s3-crypt-proxy
+  # This socket is only accessible by processes with the right permissions
+  unix_socket_path: "/run/memkey/memkey.sock"
+
+identity:
+  # Server's Ed25519 private key seed (hex encoded, 32 bytes)
+  # Generate with: memkey-server -generate-identity
+  # The public key fingerprint will be logged on startup
+  private_key: "${MEMKEY_PRIVATE_KEY}"
+
+security:
+  # How long a challenge is valid for
+  challenge_timeout: "30s"
+  
+  # Maximum failed key delivery attempts before lockout
+  max_failed_attempts: 5
+  
+  # How long the lockout lasts
+  lockout_duration: "5m"

@@ -41,5 +41,21 @@ tls:
   cert_file: ""
   key_file: ""
 
+# Memkey server configuration (for key retrieval)
+memkey:
+  # Unix socket for secure local key transfer (recommended)
+  # The proxy connects to this socket to fetch the encryption key
+  socket_path: "/run/memkey/memkey.sock"
+  
+  # HTTP endpoint for status checks (optional fallback)
+  # Only used if socket_path is not set or unavailable
+  endpoint: "http://127.0.0.1:7070"
+  
+  # How often to poll for key availability
+  poll_interval: "5s"
+  
+  # Skip TLS verification for HTTP endpoint (if using HTTPS)
+  insecure_skip_verify: false
+
 # Logging
 log_level: "info"  # debug, info, warn, error

@@ -340,7 +340,11 @@ encryption:
 # Key source: memkey server
 key_source: "memkey"
 memkey:
+  # Unix socket for secure key transfer (recommended)
+  socket_path: "/run/memkey/memkey.sock"
+  # HTTP endpoint for status checks (fallback)
   endpoint: "http://127.0.0.1:${MEMKEY_PORT}"
+  poll_interval: "5s"
 EOF
     
     chmod 640 "$CONFIG_DIR/config.yaml"
@@ -356,6 +360,8 @@ server:
   tls_enabled: ${MEMKEY_TLS_ENABLED}
   tls_cert: "${MEMKEY_TLS_CERT}"
   tls_key: "${MEMKEY_TLS_KEY}"
+  # Unix socket for secure local key transfer to proxy
+  unix_socket_path: "/run/memkey/memkey.sock"
 
 identity:
   # Server's Ed25519 private key (hex encoded)
@@ -391,12 +397,17 @@ After=network.target
 [Service]
 Type=simple
 User=root
-Group=root
+Group=${SERVICE_USER}
 ExecStart=${INSTALL_DIR}/bin/memkey-server -config ${CONFIG_DIR}/memkey.yaml
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
+
+# Runtime directory for Unix socket
+# Creates /run/memkey with permissions 0750 (root:s3crypt)
+RuntimeDirectory=memkey
+RuntimeDirectoryMode=0750
 
 # Security hardening
 NoNewPrivileges=yes
@@ -449,7 +460,8 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+# AF_UNIX needed for memkey socket communication
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes

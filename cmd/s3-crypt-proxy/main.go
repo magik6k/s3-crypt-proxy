@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -143,9 +144,9 @@ func main() {
 		errChan <- adminHTTPServer.ListenAndServe()
 	}()
 
-	// Start memkey poller if configured
+	// Start memkey poller if configured (prefer socket, fall back to HTTP endpoint)
 	var memkeyCancel context.CancelFunc
-	if cfg.Memkey.Endpoint != "" {
+	if cfg.Memkey.SocketPath != "" || cfg.Memkey.Endpoint != "" {
 		var memkeyCtx context.Context
 		memkeyCtx, memkeyCancel = context.WithCancel(context.Background())
 
@@ -154,8 +155,12 @@ func main() {
 			pollInterval = d
 		}
 
-		go pollMemkey(memkeyCtx, cfg.Memkey.Endpoint, cfg.Memkey.InsecureSkipVerify, km, m, pollInterval, logger)
-		logger.Info("memkey poller started", "endpoint", cfg.Memkey.Endpoint, "interval", pollInterval)
+		go pollMemkey(memkeyCtx, cfg.Memkey, km, m, pollInterval, logger)
+		if cfg.Memkey.SocketPath != "" {
+			logger.Info("memkey poller started", "socket", cfg.Memkey.SocketPath, "interval", pollInterval)
+		} else {
+			logger.Info("memkey poller started", "endpoint", cfg.Memkey.Endpoint, "interval", pollInterval)
+		}
 	}
 
 	// Wait for shutdown signal
@@ -196,23 +201,41 @@ func main() {
 	logger.Info("shutdown complete")
 }
 
-// pollMemkey periodically fetches the encryption key from the memkey server
-func pollMemkey(ctx context.Context, endpoint string, insecure bool, km *crypto.KeyManager, m *metrics.Metrics, interval time.Duration, logger *slog.Logger) {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			// #nosec G402 - InsecureSkipVerify is configurable for self-signed certs
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: insecure, //nolint:gosec
+// pollMemkey periodically fetches the encryption key from the memkey server.
+// It prefers Unix socket for secure local key transfer, with optional HTTP endpoint fallback.
+func pollMemkey(ctx context.Context, cfg config.MemkeyConfig, km *crypto.KeyManager, m *metrics.Metrics, interval time.Duration, logger *slog.Logger) {
+	// Create HTTP client for Unix socket if configured
+	var socketClient *http.Client
+	if cfg.SocketPath != "" {
+		socketClient = &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", cfg.SocketPath)
+				},
 			},
-		},
+		}
+	}
+
+	// Create HTTP client for TCP endpoint (used for status checks if socket not available)
+	var tcpClient *http.Client
+	if cfg.Endpoint != "" {
+		tcpClient = &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				// #nosec G402 - InsecureSkipVerify is configurable for self-signed certs
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: cfg.InsecureSkipVerify, //nolint:gosec
+				},
+			},
+		}
 	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	// Try immediately on start
-	fetchKey(client, endpoint, km, m, logger)
+	fetchKey(socketClient, tcpClient, cfg, km, m, logger)
 
 	for {
 		select {
@@ -220,15 +243,33 @@ func pollMemkey(ctx context.Context, endpoint string, insecure bool, km *crypto.
 			return
 		case <-ticker.C:
 			if !km.IsLoaded() {
-				fetchKey(client, endpoint, km, m, logger)
+				fetchKey(socketClient, tcpClient, cfg, km, m, logger)
 			}
 		}
 	}
 }
 
-func fetchKey(client *http.Client, endpoint string, km *crypto.KeyManager, m *metrics.Metrics, logger *slog.Logger) {
+// fetchKey fetches the encryption key from memkey server.
+// Priority: Unix socket for key fetch (secure), HTTP endpoint for status only.
+func fetchKey(socketClient, tcpClient *http.Client, cfg config.MemkeyConfig, km *crypto.KeyManager, m *metrics.Metrics, logger *slog.Logger) {
+	// Determine which client to use for status check
+	// Prefer socket if available, otherwise use HTTP endpoint
+	var statusClient *http.Client
+	var statusURL string
+
+	if socketClient != nil {
+		statusClient = socketClient
+		statusURL = "http://localhost/status" // Host is ignored for Unix socket
+	} else if tcpClient != nil {
+		statusClient = tcpClient
+		statusURL = cfg.Endpoint + "/status"
+	} else {
+		logger.Debug("no memkey client configured")
+		return
+	}
+
 	// Check memkey server status
-	resp, err := client.Get(endpoint + "/status")
+	resp, err := statusClient.Get(statusURL)
 	if err != nil {
 		logger.Debug("memkey server not reachable", "error", err)
 		return
@@ -260,10 +301,15 @@ func fetchKey(client *http.Client, endpoint string, km *crypto.KeyManager, m *me
 		return
 	}
 
-	// Fetch the key
-	keyResp, err := client.Get(endpoint + "/key/raw")
+	// Fetch the key - MUST use Unix socket for security
+	if socketClient == nil {
+		logger.Error("cannot fetch key: Unix socket not configured (required for secure key transfer)")
+		return
+	}
+
+	keyResp, err := socketClient.Get("http://localhost/key/raw")
 	if err != nil {
-		logger.Debug("failed to fetch key from memkey", "error", err)
+		logger.Debug("failed to fetch key from memkey socket", "error", err)
 		return
 	}
 	defer keyResp.Body.Close()
@@ -290,5 +336,5 @@ func fetchKey(client *http.Client, endpoint string, km *crypto.KeyManager, m *me
 	}
 
 	m.SetKeyLoaded(true)
-	logger.Info("encryption key loaded from memkey server")
+	logger.Info("encryption key loaded from memkey server via Unix socket")
 }

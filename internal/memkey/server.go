@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 )
@@ -17,6 +18,11 @@ type HTTPServer struct {
 	server     *Server
 	httpServer *http.Server
 	listener   net.Listener
+
+	// Unix socket for local key access
+	unixListener net.Listener
+	unixServer   *http.Server
+	unixPath     string
 
 	mu       sync.RWMutex
 	started  bool
@@ -39,6 +45,13 @@ type HTTPServerConfig struct {
 
 	// WriteTimeout for HTTP server
 	WriteTimeout time.Duration
+
+	// UnixSocketPath for local key access (e.g., "/run/memkey/key.sock")
+	// If set, the /key/raw endpoint is only available via this socket
+	UnixSocketPath string
+
+	// UnixSocketMode is the file permission for the unix socket (default 0600)
+	UnixSocketMode os.FileMode
 }
 
 // NewHTTPServer creates a new HTTP server for the memkey protocol
@@ -49,15 +62,19 @@ func NewHTTPServer(cfg *HTTPServerConfig) *HTTPServer {
 	if cfg.WriteTimeout == 0 {
 		cfg.WriteTimeout = 30 * time.Second
 	}
-
-	hs := &HTTPServer{
-		server: cfg.Server,
+	if cfg.UnixSocketMode == 0 {
+		cfg.UnixSocketMode = 0600
 	}
 
+	hs := &HTTPServer{
+		server:   cfg.Server,
+		unixPath: cfg.UnixSocketPath,
+	}
+
+	// Main HTTP mux - does NOT include /key/raw for security
 	mux := http.NewServeMux()
 	mux.HandleFunc("/challenge", hs.handleChallenge)
 	mux.HandleFunc("/key", hs.handleKey)
-	mux.HandleFunc("/key/raw", hs.handleKeyRaw)
 	mux.HandleFunc("/status", hs.handleStatus)
 	mux.HandleFunc("/health", hs.handleHealth)
 
@@ -67,6 +84,19 @@ func NewHTTPServer(cfg *HTTPServerConfig) *HTTPServer {
 		TLSConfig:    cfg.TLSConfig,
 		ReadTimeout:  cfg.ReadTimeout,
 		WriteTimeout: cfg.WriteTimeout,
+	}
+
+	// Unix socket server for local key access only
+	if cfg.UnixSocketPath != "" {
+		unixMux := http.NewServeMux()
+		unixMux.HandleFunc("/key/raw", hs.handleKeyRaw)
+		unixMux.HandleFunc("/status", hs.handleStatus)
+
+		hs.unixServer = &http.Server{
+			Handler:      unixMux,
+			ReadTimeout:  cfg.ReadTimeout,
+			WriteTimeout: cfg.WriteTimeout,
+		}
 	}
 
 	return hs
@@ -93,6 +123,7 @@ func (hs *HTTPServer) Start() error {
 	log.Printf("Server fingerprint: %s", hs.server.Identity().Fingerprint())
 	log.Printf("Server short fingerprint: %s", hs.server.Identity().ShortFingerprint())
 
+	// Start main HTTP server
 	go func() {
 		var err error
 		if hs.httpServer.TLSConfig != nil {
@@ -104,6 +135,32 @@ func (hs *HTTPServer) Start() error {
 			log.Printf("HTTP server error: %v", err)
 		}
 	}()
+
+	// Start Unix socket server for local key access
+	if hs.unixServer != nil && hs.unixPath != "" {
+		// Remove existing socket file if present
+		if err := os.Remove(hs.unixPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove existing socket: %w", err)
+		}
+
+		hs.unixListener, err = net.Listen("unix", hs.unixPath)
+		if err != nil {
+			return fmt.Errorf("failed to listen on unix socket: %w", err)
+		}
+
+		// Set socket permissions (only owner can access by default)
+		if err := os.Chmod(hs.unixPath, 0660); err != nil {
+			return fmt.Errorf("failed to set socket permissions: %w", err)
+		}
+
+		log.Printf("Key socket listening on %s", hs.unixPath)
+
+		go func() {
+			if err := hs.unixServer.Serve(hs.unixListener); err != nil && err != http.ErrServerClosed {
+				log.Printf("Unix socket server error: %v", err)
+			}
+		}()
+	}
 
 	return nil
 }
@@ -120,6 +177,18 @@ func (hs *HTTPServer) Shutdown(ctx context.Context) error {
 
 	// Clear key from memory on shutdown
 	hs.server.ClearKey()
+
+	// Shutdown Unix socket server
+	if hs.unixServer != nil {
+		if err := hs.unixServer.Shutdown(ctx); err != nil {
+			log.Printf("Unix socket shutdown error: %v", err)
+		}
+	}
+
+	// Remove socket file
+	if hs.unixPath != "" {
+		os.Remove(hs.unixPath)
+	}
 
 	return hs.httpServer.Shutdown(ctx)
 }

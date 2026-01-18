@@ -24,10 +24,11 @@ import (
 // Config holds the server configuration
 type Config struct {
 	Server struct {
-		ListenAddr string `yaml:"listen_addr"`
-		TLSEnabled bool   `yaml:"tls_enabled"`
-		TLSCert    string `yaml:"tls_cert"`
-		TLSKey     string `yaml:"tls_key"`
+		ListenAddr     string `yaml:"listen_addr"`
+		TLSEnabled     bool   `yaml:"tls_enabled"`
+		TLSCert        string `yaml:"tls_cert"`
+		TLSKey         string `yaml:"tls_key"`
+		UnixSocketPath string `yaml:"unix_socket_path"` // For local key access
 	} `yaml:"server"`
 
 	Identity struct {
@@ -133,9 +134,10 @@ func main() {
 
 	// Create HTTP server
 	httpServer := memkey.NewHTTPServer(&memkey.HTTPServerConfig{
-		ListenAddr: config.Server.ListenAddr,
-		TLSConfig:  tlsConfig,
-		Server:     server,
+		ListenAddr:     config.Server.ListenAddr,
+		TLSConfig:      tlsConfig,
+		Server:         server,
+		UnixSocketPath: config.Server.UnixSocketPath,
 	})
 
 	// Start server
@@ -144,6 +146,9 @@ func main() {
 	log.Println("========================================")
 	log.Printf("Listen address: %s", config.Server.ListenAddr)
 	log.Printf("TLS enabled: %v", config.Server.TLSEnabled)
+	if config.Server.UnixSocketPath != "" {
+		log.Printf("Unix socket: %s", config.Server.UnixSocketPath)
+	}
 	log.Println("----------------------------------------")
 	log.Printf("SERVER FINGERPRINT: %s", identity.Fingerprint())
 	log.Printf("SHORT FINGERPRINT:  %s", identity.ShortFingerprint())
@@ -181,12 +186,14 @@ func loadConfig(path string) (*Config, error) {
 			// Return default config
 			return &Config{
 				Server: struct {
-					ListenAddr string `yaml:"listen_addr"`
-					TLSEnabled bool   `yaml:"tls_enabled"`
-					TLSCert    string `yaml:"tls_cert"`
-					TLSKey     string `yaml:"tls_key"`
+					ListenAddr     string `yaml:"listen_addr"`
+					TLSEnabled     bool   `yaml:"tls_enabled"`
+					TLSCert        string `yaml:"tls_cert"`
+					TLSKey         string `yaml:"tls_key"`
+					UnixSocketPath string `yaml:"unix_socket_path"`
 				}{
-					ListenAddr: "127.0.0.1:7070",
+					ListenAddr:     "127.0.0.1:7070",
+					UnixSocketPath: "/run/memkey/memkey.sock",
 				},
 			}, nil
 		}
