@@ -1,0 +1,45 @@
+# S3-Crypt-Proxy Configuration Example
+# Copy to config.yaml and customize
+
+# Address for the S3 proxy endpoint (clients connect here)
+listen_addr: ":8080"
+
+# Address for the admin API endpoint (key management, metrics)
+admin_listen_addr: ":8081"
+
+# Backend S3 storage configuration
+backend:
+  # S3 endpoint URL
+  endpoint: "https://s3.amazonaws.com"
+  # AWS region
+  region: "us-east-1"
+  # Backend credentials (use environment variables in production)
+  access_key: "${S3CP_BACKEND_ACCESS_KEY}"
+  secret_key: "${S3CP_BACKEND_SECRET_KEY}"
+  # Use path-style URLs (required for MinIO, optional for AWS)
+  path_style: false
+  # Skip TLS verification (NOT recommended for production)
+  insecure_skip_verify: false
+
+# Client authentication (what PBS will use to connect)
+client:
+  access_key: "${S3CP_CLIENT_ACCESS_KEY}"
+  secret_key: "${S3CP_CLIENT_SECRET_KEY}"
+
+# Encryption settings
+encryption:
+  # Chunk size for streaming encryption (default 4MB)
+  chunk_size: 4194304
+
+# Admin API settings
+admin:
+  # Bearer token for admin API authentication
+  token: "${S3CP_ADMIN_TOKEN}"
+
+# TLS configuration (optional)
+tls:
+  cert_file: ""
+  key_file: ""
+
+# Logging
+log_level: "info"  # debug, info, warn, error
