@@ -200,6 +200,12 @@ collect_config() {
     prompt CLIENT_SECRET_KEY "Client secret key" "$(openssl rand -hex 32)" true
     
     echo
+    echo -e "${YELLOW}── Bucket Access Control ──${NC}"
+    echo "Specify which buckets clients can access (comma-separated)"
+    echo "Leave empty to allow access to all buckets (not recommended)"
+    prompt ALLOWED_BUCKETS "Allowed buckets" ""
+    
+    echo
     echo -e "${YELLOW}── Admin Authentication ──${NC}"
     prompt ADMIN_TOKEN "Admin API token" "$(openssl rand -hex 32)" true
     
@@ -336,6 +342,16 @@ client:
 
 encryption:
   chunk_size: 4194304  # 4MB - matches PBS chunk size
+
+# Allowed buckets (if empty, all buckets are allowed)
+allowed_buckets:
+$(if [ -n "$ALLOWED_BUCKETS" ]; then
+    IFS=',' read -ra BUCKETS <<< "$ALLOWED_BUCKETS"
+    for bucket in "${BUCKETS[@]}"; do
+        bucket=$(echo "$bucket" | xargs)  # trim whitespace
+        echo "  - \"$bucket\""
+    done
+fi)
 
 # Key source: memkey server
 key_source: "memkey"

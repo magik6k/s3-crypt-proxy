@@ -31,6 +31,13 @@ encryption:
   # Chunk size for streaming encryption (default 4MB)
   chunk_size: 4194304
 
+# Allowed buckets - restrict which buckets clients can access
+# If empty or not set, all buckets from backend are allowed (not recommended)
+# ListBuckets will return only these buckets
+allowed_buckets:
+  - "my-backup-bucket"
+  # - "another-bucket"
+
 # Admin API settings
 admin:
   # Bearer token for admin API authentication

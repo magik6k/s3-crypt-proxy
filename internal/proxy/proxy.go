@@ -19,23 +19,25 @@ import (
 
 // Proxy handles S3 requests with encryption.
 type Proxy struct {
-	backend   *s3client.Client
-	km        *crypto.KeyManager
-	encryptor *crypto.Encryptor
-	auth      *auth.Authenticator
-	metrics   *metrics.Metrics
-	chunkSize int
-	logger    *slog.Logger
+	backend        *s3client.Client
+	km             *crypto.KeyManager
+	encryptor      *crypto.Encryptor
+	auth           *auth.Authenticator
+	metrics        *metrics.Metrics
+	chunkSize      int
+	logger         *slog.Logger
+	allowedBuckets map[string]bool // nil means all buckets allowed
 }
 
 // ProxyOptions configures the proxy.
 type ProxyOptions struct {
-	Backend   *s3client.Client
-	KeyMgr    *crypto.KeyManager
-	Auth      *auth.Authenticator
-	Metrics   *metrics.Metrics
-	ChunkSize int
-	Logger    *slog.Logger
+	Backend        *s3client.Client
+	KeyMgr         *crypto.KeyManager
+	Auth           *auth.Authenticator
+	Metrics        *metrics.Metrics
+	ChunkSize      int
+	Logger         *slog.Logger
+	AllowedBuckets []string // empty means all buckets allowed
 }
 
 // NewProxy creates a new S3 encryption proxy.
@@ -47,14 +49,24 @@ func NewProxy(opts ProxyOptions) *Proxy {
 		opts.Logger = slog.Default()
 	}
 
+	// Build allowed buckets map
+	var allowedBuckets map[string]bool
+	if len(opts.AllowedBuckets) > 0 {
+		allowedBuckets = make(map[string]bool)
+		for _, b := range opts.AllowedBuckets {
+			allowedBuckets[b] = true
+		}
+	}
+
 	return &Proxy{
-		backend:   opts.Backend,
-		km:        opts.KeyMgr,
-		encryptor: crypto.NewEncryptor(opts.KeyMgr, opts.ChunkSize),
-		auth:      opts.Auth,
-		metrics:   opts.Metrics,
-		chunkSize: opts.ChunkSize,
-		logger:    opts.Logger,
+		backend:        opts.Backend,
+		km:             opts.KeyMgr,
+		encryptor:      crypto.NewEncryptor(opts.KeyMgr, opts.ChunkSize),
+		auth:           opts.Auth,
+		metrics:        opts.Metrics,
+		chunkSize:      opts.ChunkSize,
+		logger:         opts.Logger,
+		allowedBuckets: allowedBuckets,
 	}
 }
 
@@ -80,6 +92,13 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Parse bucket and key from path
 	bucket, key := p.parsePath(r)
+
+	// Check bucket access (skip for ListBuckets which has no bucket)
+	if bucket != "" && !p.isBucketAllowed(bucket) {
+		p.sendError(w, http.StatusForbidden, "AccessDenied", "Access to bucket not allowed")
+		p.metrics.RecordRequest(r.Method, "AccessDenied", http.StatusForbidden, time.Since(start), 0, 0, bucket, key)
+		return
+	}
 
 	// Route request
 	var status int
@@ -176,6 +195,15 @@ func (p *Proxy) parsePath(r *http.Request) (bucket, key string) {
 	return bucket, key
 }
 
+// isBucketAllowed checks if the bucket is in the allowed list.
+// Returns true if no allowed list is configured (all buckets allowed).
+func (p *Proxy) isBucketAllowed(bucket string) bool {
+	if p.allowedBuckets == nil {
+		return true // No restrictions
+	}
+	return p.allowedBuckets[bucket]
+}
+
 func (p *Proxy) handleHeadBucket(w http.ResponseWriter, r *http.Request, bucket string) (int, error) {
 	ctx := r.Context()
 
@@ -193,18 +221,6 @@ func (p *Proxy) handleHeadBucket(w http.ResponseWriter, r *http.Request, bucket 
 }
 
 func (p *Proxy) handleListBuckets(w http.ResponseWriter, r *http.Request) (int, error) {
-	ctx := r.Context()
-
-	output, err := p.backend.ListBuckets(ctx)
-	if err != nil {
-		if s3Err, ok := err.(*s3client.S3Error); ok {
-			p.sendError(w, s3Err.StatusCode, s3Err.Code, s3Err.Message)
-			return s3Err.StatusCode, err
-		}
-		p.sendError(w, http.StatusInternalServerError, "InternalError", err.Error())
-		return http.StatusInternalServerError, err
-	}
-
 	// Build XML response
 	type xmlBucket struct {
 		Name         string `xml:"Name"`
@@ -223,11 +239,34 @@ func (p *Proxy) handleListBuckets(w http.ResponseWriter, r *http.Request) (int, 
 		Xmlns: "http://s3.amazonaws.com/doc/2006-03-01/",
 	}
 
-	for _, b := range output.Buckets {
-		resp.Buckets.Bucket = append(resp.Buckets.Bucket, xmlBucket{
-			Name:         b.Name,
-			CreationDate: b.CreationDate.Format(time.RFC3339),
-		})
+	// If allowed buckets are configured, return only those (hardcoded list)
+	// This avoids needing ListBuckets permission on the backend
+	if p.allowedBuckets != nil {
+		for bucket := range p.allowedBuckets {
+			resp.Buckets.Bucket = append(resp.Buckets.Bucket, xmlBucket{
+				Name:         bucket,
+				CreationDate: time.Now().UTC().Format(time.RFC3339),
+			})
+		}
+	} else {
+		// No restrictions - query backend for bucket list
+		ctx := r.Context()
+		output, err := p.backend.ListBuckets(ctx)
+		if err != nil {
+			if s3Err, ok := err.(*s3client.S3Error); ok {
+				p.sendError(w, s3Err.StatusCode, s3Err.Code, s3Err.Message)
+				return s3Err.StatusCode, err
+			}
+			p.sendError(w, http.StatusInternalServerError, "InternalError", err.Error())
+			return http.StatusInternalServerError, err
+		}
+
+		for _, b := range output.Buckets {
+			resp.Buckets.Bucket = append(resp.Buckets.Bucket, xmlBucket{
+				Name:         b.Name,
+				CreationDate: b.CreationDate.Format(time.RFC3339),
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/xml")

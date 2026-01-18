@@ -36,6 +36,11 @@ type Config struct {
 	// Memkey configuration for fetching encryption key
 	Memkey MemkeyConfig `yaml:"memkey"`
 
+	// AllowedBuckets is the list of buckets that clients can access
+	// If empty, all buckets from backend are allowed (not recommended)
+	// ListBuckets will return only these buckets
+	AllowedBuckets []string `yaml:"allowed_buckets"`
+
 	// Logging configuration
 	LogLevel string `yaml:"log_level"`
 }
@@ -217,6 +222,15 @@ func LoadFromEnv() *Config {
 	}
 	if v := os.Getenv("S3CP_MEMKEY_INSECURE"); v != "" {
 		cfg.Memkey.InsecureSkipVerify = parseBool(v)
+	}
+
+	// Allowed buckets (comma-separated)
+	if v := os.Getenv("S3CP_ALLOWED_BUCKETS"); v != "" {
+		buckets := strings.Split(v, ",")
+		for i := range buckets {
+			buckets[i] = strings.TrimSpace(buckets[i])
+		}
+		cfg.AllowedBuckets = buckets
 	}
 
 	// Log level

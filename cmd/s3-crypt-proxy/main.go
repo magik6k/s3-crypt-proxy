@@ -98,13 +98,18 @@ func main() {
 
 	// Create proxy
 	p := proxy.NewProxy(proxy.ProxyOptions{
-		Backend:   backend,
-		KeyMgr:    km,
-		Auth:      clientAuth,
-		Metrics:   m,
-		ChunkSize: cfg.Encryption.ChunkSize,
-		Logger:    logger,
+		Backend:        backend,
+		KeyMgr:         km,
+		Auth:           clientAuth,
+		Metrics:        m,
+		ChunkSize:      cfg.Encryption.ChunkSize,
+		Logger:         logger,
+		AllowedBuckets: cfg.AllowedBuckets,
 	})
+
+	if len(cfg.AllowedBuckets) > 0 {
+		logger.Info("bucket access restricted", "allowed_buckets", cfg.AllowedBuckets)
+	}
 
 	// Create admin server
 	adminServer := admin.NewServer(km, cfg.Admin.Token, m)
