@@ -310,6 +310,7 @@ func (e *Encryptor) Encrypt(objectKey string, plaintext []byte, metadata *Object
 
 	// Assemble final output
 	metaLenBytes := make([]byte, EncryptedMetadataLengthSize)
+	// #nosec G115 - encryptedMeta length is bounded by metadata size (< 1MB)
 	binary.BigEndian.PutUint32(metaLenBytes, uint32(len(encryptedMeta)))
 
 	totalSize := HeaderSize + SaltSize + EncryptedMetadataLengthSize + len(encryptedMeta) + len(encryptedContent)

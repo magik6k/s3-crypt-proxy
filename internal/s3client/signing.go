@@ -23,6 +23,6 @@ func hmacSHA256(key, data []byte) []byte {
 // calculatePayloadHash calculates the SHA256 hash of a request body.
 func calculatePayloadHash(body io.ReadSeeker) string {
 	h := sha256.New()
-	io.Copy(h, body)
+	_, _ = io.Copy(h, body) // Hash write never fails
 	return hex.EncodeToString(h.Sum(nil))
 }

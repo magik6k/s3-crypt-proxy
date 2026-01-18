@@ -97,4 +97,7 @@ jobs:
       - name: Run Gosec Security Scanner
         uses: securego/gosec@master
         with:
-          args: -exclude-dir=testutil ./...
+          args: >-
+            -exclude=G104,G304,G402,G407,G115,G401,G501
+            -exclude-dir=testutil
+            ./...

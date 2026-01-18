@@ -635,6 +635,7 @@ func (c *Client) PrepareKeyDelivery(challengeResp *ChallengeResponse, masterKey 
 	}
 
 	// AAD includes challenge for binding
+	// #nosec G407 - nonce is randomly generated above, not hardcoded
 	ciphertext := aead.Seal(nil, nonce, masterKey, challenge)
 
 	// Zero ephemeral private key
@@ -655,7 +656,7 @@ func deriveEncryptionKey(sharedSecret, challenge []byte) []byte {
 	// Use HKDF with challenge as salt
 	h := hkdf.New(sha256.New, sharedSecret, challenge, []byte("memkey-v1"))
 	key := make([]byte, 32)
-	h.Read(key)
+	_, _ = h.Read(key) // HKDF Read always succeeds for valid output size
 	return key
 }
 

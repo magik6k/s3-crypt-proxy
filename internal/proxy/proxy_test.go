@@ -372,7 +372,10 @@ func TestListObjectsV2(t *testing.T) {
 		env.proxyServer.URL+"/test-bucket/?list-type=2&prefix=folder1/", nil)
 	env.signRequest(listReq2)
 
-	listResp2, _ := http.DefaultClient.Do(listReq2)
+	listResp2, err := http.DefaultClient.Do(listReq2)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer listResp2.Body.Close()
 
 	var result2 struct {
@@ -514,7 +517,10 @@ func TestCopyObject(t *testing.T) {
 		env.proxyServer.URL+"/test-bucket/dest.txt", nil)
 	env.signRequest(getReq)
 
-	getResp, _ := http.DefaultClient.Do(getReq)
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer getResp.Body.Close()
 
 	destData, _ := io.ReadAll(getResp.Body)
@@ -556,7 +562,10 @@ func TestHeadBucket(t *testing.T) {
 		env.proxyServer.URL+"/nonexistent-bucket/", nil)
 	env.signRequest(headReq2)
 
-	headResp2, _ := http.DefaultClient.Do(headReq2)
+	headResp2, err := http.DefaultClient.Do(headReq2)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer headResp2.Body.Close()
 
 	if headResp2.StatusCode == http.StatusOK {
@@ -625,7 +634,10 @@ func TestIfNoneMatch(t *testing.T) {
 	putReq2.Header.Set("If-None-Match", "*")
 	env.signRequest(putReq2)
 
-	resp2, _ := http.DefaultClient.Do(putReq2)
+	resp2, err := http.DefaultClient.Do(putReq2)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer resp2.Body.Close()
 
 	if resp2.StatusCode != http.StatusPreconditionFailed {
@@ -637,7 +649,10 @@ func TestIfNoneMatch(t *testing.T) {
 		env.proxyServer.URL+"/test-bucket/unique.txt", nil)
 	env.signRequest(getReq)
 
-	getResp, _ := http.DefaultClient.Do(getReq)
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer getResp.Body.Close()
 
 	data, _ := io.ReadAll(getResp.Body)
@@ -678,7 +693,10 @@ func TestKeyNotLoaded(t *testing.T) {
 		bytes.NewReader([]byte("test")))
 	env.signRequest(putReq)
 
-	resp, _ := http.DefaultClient.Do(putReq)
+	resp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusServiceUnavailable {
@@ -832,7 +850,10 @@ func TestNotFound(t *testing.T) {
 		env.proxyServer.URL+"/test-bucket/nonexistent.txt", nil)
 	env.signRequest(getReq)
 
-	getResp, _ := http.DefaultClient.Do(getReq)
+	getResp, err := http.DefaultClient.Do(getReq)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
 	defer getResp.Body.Close()
 
 	if getResp.StatusCode != http.StatusNotFound {

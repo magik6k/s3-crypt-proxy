@@ -232,7 +232,7 @@ func (p *Proxy) handleListBuckets(w http.ResponseWriter, r *http.Request) (int, 
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	xml.NewEncoder(w).Encode(resp)
+	_ = xml.NewEncoder(w).Encode(resp)
 
 	return http.StatusOK, nil
 }
@@ -306,7 +306,7 @@ func (p *Proxy) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buck
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	xml.NewEncoder(w).Encode(resp)
+	_ = xml.NewEncoder(w).Encode(resp)
 
 	return http.StatusOK, nil
 }
@@ -588,7 +588,7 @@ func (p *Proxy) handleDeleteObjects(w http.ResponseWriter, r *http.Request, buck
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	xml.NewEncoder(w).Encode(resp)
+	_ = xml.NewEncoder(w).Encode(resp)
 
 	return http.StatusOK, nil
 }
@@ -683,7 +683,7 @@ func (p *Proxy) handleCopyObject(w http.ResponseWriter, r *http.Request, destBuc
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
-	xml.NewEncoder(w).Encode(resp)
+	_ = xml.NewEncoder(w).Encode(resp)
 
 	return http.StatusOK, nil
 }
@@ -698,7 +698,7 @@ func (p *Proxy) sendError(w http.ResponseWriter, status int, code, message strin
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(status)
 
-	xml.NewEncoder(w).Encode(xmlError{
+	_ = xml.NewEncoder(w).Encode(xmlError{
 		Code:    code,
 		Message: message,
 	})

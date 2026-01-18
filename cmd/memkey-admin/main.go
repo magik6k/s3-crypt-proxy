@@ -255,7 +255,7 @@ func cmdKeyGenerate(args []string) error {
 		fmt.Printf("Key file already exists: %s\n", config.KeyFile)
 		fmt.Print("Overwrite? [y/N]: ")
 		var response string
-		fmt.Scanln(&response)
+		_, _ = fmt.Scanln(&response)
 		if response != "y" && response != "Y" {
 			fmt.Println("Aborted.")
 			return nil
@@ -571,8 +571,9 @@ func loadKey(path string) ([]byte, error) {
 
 func createHTTPClient(config *Config) *http.Client {
 	transport := &http.Transport{
+		// #nosec G402 - InsecureSkipVerify is configurable for self-signed certs
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: config.SkipTLSVerify,
+			InsecureSkipVerify: config.SkipTLSVerify, //nolint:gosec
 		},
 	}
 

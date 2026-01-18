@@ -79,6 +79,7 @@ func NewStreamingEncryptor(km *KeyManager, objectKey string, metadata *ObjectMet
 
 	// Build complete header section
 	metaLenBytes := make([]byte, EncryptedMetadataLengthSize)
+	// #nosec G115 - encryptedMeta length is bounded by metadata size (< 1MB)
 	binary.BigEndian.PutUint32(metaLenBytes, uint32(len(encryptedMeta)))
 
 	fullHeader := make([]byte, 0, HeaderSize+SaltSize+EncryptedMetadataLengthSize+len(encryptedMeta))

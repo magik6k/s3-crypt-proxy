@@ -72,16 +72,16 @@ func (s *Server) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	_, _ = w.Write([]byte("ok"))
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 	if s.km.IsLoaded() {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ready"))
+		_, _ = w.Write([]byte("ready"))
 	} else {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("not ready: encryption key not loaded"))
+		_, _ = w.Write([]byte("not ready: encryption key not loaded"))
 	}
 }
 
@@ -125,7 +125,7 @@ func (s *Server) handleKeyLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleKey(w http.ResponseWriter, r *http.Request) {
@@ -138,7 +138,7 @@ func (s *Server) handleKey(w http.ResponseWriter, r *http.Request) {
 	s.metrics.SetKeyLoaded(false)
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status": "cleared"}`))
+	_, _ = w.Write([]byte(`{"status": "cleared"}`))
 }
 
 type keyStatusResponse struct {
@@ -163,7 +163,7 @@ func (s *Server) handleKeyStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleLiveMetrics(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +189,7 @@ func (s *Server) handleLiveMetrics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (s *Server) handleLiveUI(w http.ResponseWriter, r *http.Request) {
@@ -199,7 +199,7 @@ func (s *Server) handleLiveUI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(liveUIHTML))
+	_, _ = w.Write([]byte(liveUIHTML))
 }
 
 const liveUIHTML = `<!DOCTYPE html>

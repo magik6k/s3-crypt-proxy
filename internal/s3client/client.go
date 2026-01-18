@@ -42,8 +42,9 @@ func NewClient(opts ClientOptions) *Client {
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
+		// #nosec G402 - InsecureSkipVerify is configurable for self-signed certs
 		TLSClientConfig: &tls.Config{
-			InsecureSkipVerify: opts.InsecureSkipVerify,
+			InsecureSkipVerify: opts.InsecureSkipVerify, //nolint:gosec
 		},
 	}
 
@@ -358,7 +359,7 @@ func (c *Client) GetObjectRange(ctx context.Context, bucket, key string, start, 
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, nil
 	}
 
@@ -408,12 +409,12 @@ func (c *Client) GetObject(ctx context.Context, bucket, key string) (*GetObjectO
 	}
 
 	if resp.StatusCode == http.StatusNotFound {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, nil
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
+		defer resp.Body.Close() //nolint:errcheck
 		return nil, c.parseError(resp)
 	}
 
@@ -521,7 +522,7 @@ func (c *Client) DeleteObjects(ctx context.Context, input *DeleteObjectsInput) (
 	buf.WriteString(`<Delete xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
 	for _, obj := range input.Objects {
 		buf.WriteString("<Object><Key>")
-		xml.EscapeText(&buf, []byte(obj.Key))
+		_ = xml.EscapeText(&buf, []byte(obj.Key)) // Write to buffer never fails
 		buf.WriteString("</Key></Object>")
 	}
 	buf.WriteString("</Delete>")
@@ -673,7 +674,7 @@ func (c *Client) signRequest(req *http.Request) {
 		payloadHash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" // SHA256 of empty string
 	} else if seeker, ok := req.Body.(io.ReadSeeker); ok {
 		payloadHash = calculatePayloadHash(seeker)
-		seeker.Seek(0, io.SeekStart)
+		_, _ = seeker.Seek(0, io.SeekStart)
 	} else {
 		payloadHash = "UNSIGNED-PAYLOAD"
 	}

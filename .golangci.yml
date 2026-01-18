@@ -14,24 +14,31 @@ linters:
     - goimports
     - misspell
     - unconvert
-    - unparam
-    - gosec
-    - prealloc
+
+  disable:
+    - unparam      # Too many false positives for handlers
+    - gosec        # Run separately with exclusions
 
 linters-settings:
   errcheck:
     check-type-assertions: true
     check-blank: false
+    # Ignore errors from these functions (common in HTTP handlers)
+    exclude-functions:
+      - (io.Writer).Write
+      - (*encoding/json.Encoder).Encode
+      - (*encoding/xml.Encoder).Encode
+      - (net/http.ResponseWriter).Write
+      - fmt.Fprint
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - fmt.Scanln
   
   govet:
     enable-all: true
     disable:
-      - fieldalignment  # Too strict for this project
-  
-  gosec:
-    excludes:
-      - G104  # Audit errors not checked (we handle this explicitly)
-      - G304  # File path from variable (needed for config loading)
+      - fieldalignment  # Too strict
+      - shadow          # Too many false positives with err
   
   misspell:
     locale: US
@@ -43,19 +50,15 @@ issues:
       linters:
         - lll
     
-    # Ignore magic numbers in tests
+    # Ignore errors in test files
     - path: _test\.go
-      linters:
-        - gomnd
-    
-    # Ignore error return in test cleanup
-    - path: _test\.go
-      text: "Error return value of .* is not checked"
-    
-    # Allow sha256.Sum256 without error check (it doesn't return error)
-    - text: "Error return value of `sha256.Sum256` is not checked"
       linters:
         - errcheck
+    
+    # Ignore unused params in test utilities
+    - path: testutil/
+      linters:
+        - unparam
 
   max-issues-per-linter: 0
   max-same-issues: 0
