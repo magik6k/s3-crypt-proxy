@@ -93,12 +93,13 @@ func (a *Authenticator) Authenticate(r *http.Request) *AuthResult {
 
 func (a *Authenticator) calculateSignature(r *http.Request, dateStr, region, signedHeadersStr, amzDate string) string {
 	// Create canonical request
-	canonicalURI := r.URL.Path
+	// URI must be URI-encoded (except for /) as per AWS Signature V4
+	canonicalURI := uriEncode(r.URL.Path, false)
 	if canonicalURI == "" {
 		canonicalURI = "/"
 	}
 
-	canonicalQuery := r.URL.RawQuery
+	canonicalQuery := canonicalQueryString(r.URL.RawQuery)
 
 	// Build canonical headers
 	signedHeaders := strings.Split(signedHeadersStr, ";")
@@ -147,6 +148,64 @@ func (a *Authenticator) calculateSignature(r *http.Request, dateStr, region, sig
 func hashSHA256(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
+}
+
+// uriEncode encodes a URI path according to AWS S3 signature requirements.
+// When encodeSlash is false, forward slashes are not encoded.
+func uriEncode(path string, encodeSlash bool) string {
+	var encoded strings.Builder
+	for _, ch := range []byte(path) {
+		if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+			(ch >= '0' && ch <= '9') || ch == '_' || ch == '-' || ch == '~' || ch == '.' {
+			encoded.WriteByte(ch)
+		} else if ch == '/' && !encodeSlash {
+			encoded.WriteByte(ch)
+		} else {
+			encoded.WriteString(fmt.Sprintf("%%%02X", ch))
+		}
+	}
+	return encoded.String()
+}
+
+// canonicalQueryString creates a canonical query string for AWS signature.
+func canonicalQueryString(rawQuery string) string {
+	if rawQuery == "" {
+		return ""
+	}
+
+	// Parse and re-encode query parameters
+	params := make(map[string][]string)
+	for _, part := range strings.Split(rawQuery, "&") {
+		if part == "" {
+			continue
+		}
+		kv := strings.SplitN(part, "=", 2)
+		key := kv[0]
+		value := ""
+		if len(kv) == 2 {
+			value = kv[1]
+		}
+		params[key] = append(params[key], value)
+	}
+
+	// Sort keys
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build canonical query string
+	var parts []string
+	for _, k := range keys {
+		values := params[k]
+		sort.Strings(values)
+		for _, v := range values {
+			parts = append(parts, uriEncode(k, true)+"="+uriEncode(v, true))
+		}
+	}
+
+	return strings.Join(parts, "&")
 }
 
 func hmacSHA256(key, data []byte) []byte {
