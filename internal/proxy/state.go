@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/s3-crypt-proxy/internal/crypto"
@@ -197,7 +198,11 @@ func generateBucketID() string {
 
 func readAll(r interface{ Read([]byte) (int, error) }) ([]byte, error) {
 	var buf bytes.Buffer
-	_, err := buf.ReadFrom(r.(interface{ Read([]byte) (int, error) }))
+	reader, ok := r.(io.Reader)
+	if !ok {
+		return nil, fmt.Errorf("reader does not implement io.Reader")
+	}
+	_, err := buf.ReadFrom(reader)
 	if err != nil {
 		return nil, err
 	}

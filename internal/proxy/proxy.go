@@ -314,6 +314,8 @@ func (p *Proxy) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buck
 		Xmlns                 string        `xml:"xmlns,attr"`
 		Name                  string        `xml:"Name"`
 		Prefix                string        `xml:"Prefix"`
+		KeyCount              int           `xml:"KeyCount"`
+		MaxKeys               int           `xml:"MaxKeys"`
 		IsTruncated           bool          `xml:"IsTruncated"`
 		ContinuationToken     string        `xml:"ContinuationToken,omitempty"`
 		NextContinuationToken string        `xml:"NextContinuationToken,omitempty"`
@@ -324,6 +326,7 @@ func (p *Proxy) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buck
 		Xmlns:                 "http://s3.amazonaws.com/doc/2006-03-01/",
 		Name:                  bucket,
 		Prefix:                prefix,
+		MaxKeys:               1000,
 		IsTruncated:           output.IsTruncated,
 		ContinuationToken:     continuationToken,
 		NextContinuationToken: output.NextContinuationToken,
@@ -341,6 +344,10 @@ func (p *Proxy) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buck
 		if estimatedSize > int64(crypto.HeaderSize+crypto.SaltSize+100) {
 			estimatedSize = crypto.CalculatePlaintextSize(obj.Size, 100)
 		}
+		// Ensure size is never negative (for very small encrypted objects)
+		if estimatedSize < 0 {
+			estimatedSize = 0
+		}
 
 		resp.Contents = append(resp.Contents, xmlContents{
 			Key:          obj.Key,
@@ -350,6 +357,9 @@ func (p *Proxy) handleListObjectsV2(w http.ResponseWriter, r *http.Request, buck
 			StorageClass: obj.StorageClass,
 		})
 	}
+
+	// Set KeyCount to actual number of returned objects
+	resp.KeyCount = len(resp.Contents)
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)
@@ -396,20 +406,17 @@ func (p *Proxy) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	defer output.Body.Close()
 
-	// Create decrypt reader
-	decryptReader, err := crypto.NewDecryptReader(output.Body, p.km, key, p.chunkSize)
+	// Read entire encrypted content
+	ciphertext, err := io.ReadAll(output.Body)
 	if err != nil {
-		p.metrics.RecordEncryptionError("decrypt_init")
-		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to initialize decryption")
+		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to read object")
 		return http.StatusInternalServerError, 0, err
 	}
 
-	metadata := decryptReader.Metadata()
-
-	// Read all decrypted content to compute ETag
-	plaintext, err := io.ReadAll(decryptReader)
+	// Decrypt using non-streaming decryptor (matches how we encrypt)
+	plaintext, metadata, err := p.encryptor.Decrypt(key, ciphertext)
 	if err != nil {
-		p.metrics.RecordEncryptionError("decrypt_stream")
+		p.metrics.RecordEncryptionError("decrypt")
 		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to decrypt object")
 		return http.StatusInternalServerError, 0, err
 	}
@@ -448,21 +455,18 @@ func (p *Proxy) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, 
 
 	defer output.Body.Close()
 
-	// Create decrypt reader
-	decryptReader, err := crypto.NewDecryptReader(output.Body, p.km, key, p.chunkSize)
+	// Read entire encrypted content
+	// PBS chunks are typically ~4MB so this is acceptable
+	ciphertext, err := io.ReadAll(output.Body)
 	if err != nil {
-		p.metrics.RecordEncryptionError("decrypt_init")
-		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to initialize decryption")
+		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to read object")
 		return http.StatusInternalServerError, 0, err
 	}
 
-	metadata := decryptReader.Metadata()
-
-	// Read all decrypted content to compute ETag
-	// PBS chunks are typically ~4MB so this is acceptable
-	plaintext, err := io.ReadAll(decryptReader)
+	// Decrypt using non-streaming decryptor (matches how we encrypt)
+	plaintext, metadata, err := p.encryptor.Decrypt(key, ciphertext)
 	if err != nil {
-		p.metrics.RecordEncryptionError("decrypt_stream")
+		p.metrics.RecordEncryptionError("decrypt")
 		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to decrypt object")
 		return http.StatusInternalServerError, 0, err
 	}

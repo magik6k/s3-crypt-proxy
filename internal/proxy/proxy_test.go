@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strings"
 	"testing"
@@ -168,39 +169,32 @@ func uriEncode(path string, encodeSlash bool) string {
 }
 
 // canonicalQueryString creates a canonical query string for AWS signature.
+// It decodes URL-encoded values first, then re-encodes them per AWS spec.
 func canonicalQueryString(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
 	}
 
-	// Parse and re-encode query parameters
-	params := make(map[string][]string)
-	for _, part := range strings.Split(rawQuery, "&") {
-		if part == "" {
-			continue
-		}
-		kv := strings.SplitN(part, "=", 2)
-		key := kv[0]
-		value := ""
-		if len(kv) == 2 {
-			value = kv[1]
-		}
-		params[key] = append(params[key], value)
+	// Use url.ParseQuery which properly decodes URL-encoded values
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		// Fall back to simple parsing if url.ParseQuery fails
+		return rawQuery
 	}
 
 	// Sort keys
-	keys := make([]string, 0, len(params))
-	for k := range params {
+	keys := make([]string, 0, len(values))
+	for k := range values {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	// Build canonical query string
+	// Build canonical query string with proper URI encoding
 	var parts []string
 	for _, k := range keys {
-		values := params[k]
-		sort.Strings(values)
-		for _, v := range values {
+		vals := values[k]
+		sort.Strings(vals)
+		for _, v := range vals {
 			parts = append(parts, uriEncode(k, true)+"="+uriEncode(v, true))
 		}
 	}

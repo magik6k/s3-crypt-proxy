@@ -263,7 +263,12 @@ func (sd *StreamingDecryptor) DecryptChunk(ciphertext []byte) ([]byte, error) {
 
 	plaintext, err := sd.cipher.Open(nil, nonce, ciphertext, aad)
 	if err != nil {
-		return nil, ErrAuthenticationFailed
+		// Log first 64 bytes of ciphertext for debugging
+		preview := ciphertext
+		if len(preview) > 64 {
+			preview = preview[:64]
+		}
+		return nil, fmt.Errorf("%w: chunk %d, ciphertext len %d, objectKey %q, salt %x, first64 %x", ErrAuthenticationFailed, sd.chunkIndex, len(ciphertext), sd.objectKey, sd.salt, preview)
 	}
 
 	sd.chunkIndex++

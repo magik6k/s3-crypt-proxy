@@ -808,12 +808,41 @@ func uriEncode(path string, encodeSlash bool) string {
 }
 
 // canonicalQueryString creates a canonical query string for AWS signature.
+// It decodes URL-encoded values first, then re-encodes them per AWS spec.
 func canonicalQueryString(rawQuery string) string {
 	if rawQuery == "" {
 		return ""
 	}
 
-	// Parse and re-encode query parameters
+	// Use url.ParseQuery which properly decodes URL-encoded values
+	values, err := url.ParseQuery(rawQuery)
+	if err != nil {
+		// Fall back to simple parsing if url.ParseQuery fails
+		return fallbackCanonicalQueryString(rawQuery)
+	}
+
+	// Sort keys
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// Build canonical query string with proper URI encoding
+	var parts []string
+	for _, k := range keys {
+		vals := values[k]
+		sort.Strings(vals)
+		for _, v := range vals {
+			parts = append(parts, uriEncode(k, true)+"="+uriEncode(v, true))
+		}
+	}
+
+	return strings.Join(parts, "&")
+}
+
+// fallbackCanonicalQueryString is used when url.ParseQuery fails.
+func fallbackCanonicalQueryString(rawQuery string) string {
 	params := make(map[string][]string)
 	for _, part := range strings.Split(rawQuery, "&") {
 		if part == "" {
@@ -828,14 +857,12 @@ func canonicalQueryString(rawQuery string) string {
 		params[key] = append(params[key], value)
 	}
 
-	// Sort keys
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	// Build canonical query string
 	var parts []string
 	for _, k := range keys {
 		values := params[k]
