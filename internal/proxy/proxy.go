@@ -3,7 +3,10 @@ package proxy
 
 import (
 	"bytes"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -80,6 +83,11 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	authResult := p.auth.Authenticate(r)
 	if !authResult.Authenticated {
 		p.metrics.RecordAuthFailure(authResult.Error)
+		p.logger.Debug("authentication failed",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"error", authResult.Error,
+			"remote_addr", r.RemoteAddr)
 		p.sendError(w, http.StatusForbidden, "AccessDenied", authResult.Error)
 		return
 	}
@@ -369,14 +377,9 @@ func (p *Proxy) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket,
 		return http.StatusNotFound, 0, nil
 	}
 
-	// Use Range request to fetch only the header portion (first 2KB should be enough for header + metadata)
-	// This avoids downloading the entire object just to read metadata
-	maxHeaderSize := int64(crypto.HeaderSize + crypto.SaltSize + 4 + 2048) // Header + generous metadata allowance
-	if headOutput.ContentLength < maxHeaderSize {
-		maxHeaderSize = headOutput.ContentLength
-	}
-
-	output, err := p.backend.GetObjectRange(ctx, bucket, key, 0, maxHeaderSize-1)
+	// Fetch entire object to decrypt and compute ETag
+	// This is necessary because ETag must be computed from plaintext content
+	output, err := p.backend.GetObject(ctx, bucket, key)
 	if err != nil {
 		if s3Err, ok := err.(*s3client.S3Error); ok {
 			p.sendError(w, s3Err.StatusCode, s3Err.Code, s3Err.Message)
@@ -393,32 +396,31 @@ func (p *Proxy) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket,
 
 	defer output.Body.Close()
 
-	// Read the header portion
-	headerBuf, err := io.ReadAll(output.Body)
+	// Create decrypt reader
+	decryptReader, err := crypto.NewDecryptReader(output.Body, p.km, key, p.chunkSize)
 	if err != nil {
-		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to read object header")
+		p.metrics.RecordEncryptionError("decrypt_init")
+		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to initialize decryption")
 		return http.StatusInternalServerError, 0, err
 	}
 
-	// Create a decryptor to read metadata
-	decryptor, err := crypto.NewStreamingDecryptor(p.km, key, p.chunkSize)
+	metadata := decryptReader.Metadata()
+
+	// Read all decrypted content to compute ETag
+	plaintext, err := io.ReadAll(decryptReader)
 	if err != nil {
-		p.sendError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		p.metrics.RecordEncryptionError("decrypt_stream")
+		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to decrypt object")
 		return http.StatusInternalServerError, 0, err
 	}
 
-	metadata, _, err := decryptor.ReadHeader(bytes.NewReader(headerBuf))
-	if err != nil {
-		p.metrics.RecordEncryptionError("decrypt_header")
-		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to decrypt object metadata")
-		return http.StatusInternalServerError, 0, err
-	}
+	// Compute ETag from plaintext MD5 (matches PutObject/GetObject)
+	plaintextHash := md5.Sum(plaintext)
+	plaintextETag := fmt.Sprintf("\"%s\"", hex.EncodeToString(plaintextHash[:]))
 
 	w.Header().Set("Content-Type", metadata.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(metadata.ContentLength, 10))
-	if metadata.ETag != "" {
-		w.Header().Set("ETag", metadata.ETag)
-	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(plaintext)))
+	w.Header().Set("ETag", plaintextETag)
 	w.WriteHeader(http.StatusOK)
 
 	return http.StatusOK, 0, nil
@@ -455,23 +457,33 @@ func (p *Proxy) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, 
 
 	metadata := decryptReader.Metadata()
 
-	w.Header().Set("Content-Type", metadata.ContentType)
-	w.Header().Set("Content-Length", strconv.FormatInt(metadata.ContentLength, 10))
-	if metadata.ETag != "" {
-		w.Header().Set("ETag", metadata.ETag)
-	}
-	w.WriteHeader(http.StatusOK)
-
-	// Stream decrypted content
-	bytesWritten, err := io.Copy(w, decryptReader)
+	// Read all decrypted content to compute ETag
+	// PBS chunks are typically ~4MB so this is acceptable
+	plaintext, err := io.ReadAll(decryptReader)
 	if err != nil {
 		p.metrics.RecordEncryptionError("decrypt_stream")
-		return http.StatusInternalServerError, bytesWritten, err
+		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to decrypt object")
+		return http.StatusInternalServerError, 0, err
 	}
 
-	p.metrics.RecordDecryption(bytesWritten, time.Since(startTime))
+	// Compute ETag from plaintext MD5 (matches PutObject)
+	plaintextHash := md5.Sum(plaintext)
+	plaintextETag := fmt.Sprintf("\"%s\"", hex.EncodeToString(plaintextHash[:]))
 
-	return http.StatusOK, bytesWritten, nil
+	w.Header().Set("Content-Type", metadata.ContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(plaintext)))
+	w.Header().Set("ETag", plaintextETag)
+	w.WriteHeader(http.StatusOK)
+
+	// Write decrypted content
+	bytesWritten, err := w.Write(plaintext)
+	if err != nil {
+		return http.StatusInternalServerError, int64(bytesWritten), err
+	}
+
+	p.metrics.RecordDecryption(int64(bytesWritten), time.Since(startTime))
+
+	return http.StatusOK, int64(bytesWritten), nil
 }
 
 func (p *Proxy) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, key string) (int, int64, error) {
@@ -492,6 +504,10 @@ func (p *Proxy) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, 
 		p.sendError(w, http.StatusInternalServerError, "InternalError", "Failed to read request body")
 		return http.StatusInternalServerError, 0, err
 	}
+
+	// Compute ETag from plaintext MD5 (standard S3 behavior)
+	plaintextHash := md5.Sum(body)
+	plaintextETag := fmt.Sprintf("\"%s\"", hex.EncodeToString(plaintextHash[:]))
 
 	// Create metadata
 	metadata := &crypto.ObjectMetadata{
@@ -521,7 +537,7 @@ func (p *Proxy) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, 
 		input.IfNoneMatch = "*"
 	}
 
-	output, err := p.backend.PutObject(ctx, input)
+	_, err = p.backend.PutObject(ctx, input)
 	if err != nil {
 		if s3client.IsPreconditionFailed(err) {
 			p.sendError(w, http.StatusPreconditionFailed, "PreconditionFailed", "Object already exists")
@@ -537,7 +553,8 @@ func (p *Proxy) handlePutObject(w http.ResponseWriter, r *http.Request, bucket, 
 
 	p.metrics.RecordEncryption(contentLength, time.Since(startTime))
 
-	w.Header().Set("ETag", output.ETag)
+	// Return ETag computed from plaintext (consistent with GetObject)
+	w.Header().Set("ETag", plaintextETag)
 	w.WriteHeader(http.StatusOK)
 
 	return http.StatusOK, contentLength, nil

@@ -40,25 +40,14 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Setup logging
-	logLevel := slog.LevelInfo
-	if lvl := os.Getenv("S3CP_LOG_LEVEL"); lvl == "debug" {
-		logLevel = slog.LevelDebug
-	}
-
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: logLevel,
-	}))
-	slog.SetDefault(logger)
-
-	// Load configuration
+	// Load configuration first (before setting up logging to get log level from config)
 	var cfg *config.Config
 	var err error
 
 	if *configFile != "" {
 		cfg, err = config.LoadFromFile(*configFile)
 		if err != nil {
-			logger.Error("failed to load config file", "error", err)
+			fmt.Fprintf(os.Stderr, "failed to load config file: %v\n", err)
 			os.Exit(1)
 		}
 	} else {
@@ -66,9 +55,25 @@ func main() {
 	}
 
 	if err := cfg.Validate(); err != nil {
-		logger.Error("invalid configuration", "error", err)
+		fmt.Fprintf(os.Stderr, "invalid configuration: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Setup logging based on config
+	logLevel := slog.LevelInfo
+	switch cfg.LogLevel {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	}
+
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: logLevel,
+	}))
+	slog.SetDefault(logger)
 
 	// Initialize components
 	logger.Info("starting s3-crypt-proxy",
