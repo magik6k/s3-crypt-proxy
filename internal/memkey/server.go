@@ -148,7 +148,8 @@ func (hs *HTTPServer) Start() error {
 			return fmt.Errorf("failed to listen on unix socket: %w", err)
 		}
 
-		// Set socket permissions (only owner can access by default)
+		// Set socket permissions to allow group access (s3crypt group)
+		// #nosec G302 -- 0660 is intentional to allow group members to access the socket
 		if err := os.Chmod(hs.unixPath, 0660); err != nil {
 			return fmt.Errorf("failed to set socket permissions: %w", err)
 		}

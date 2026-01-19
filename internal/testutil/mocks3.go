@@ -366,7 +366,7 @@ func (s *MockS3Server) handleGetObject(w http.ResponseWriter, r *http.Request, b
 	rangeHeader := r.Header.Get("Range")
 	if rangeHeader != "" {
 		var start, end int64
-		fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end)
+		_, _ = fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end)
 
 		if start < 0 {
 			start = 0
