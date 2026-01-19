@@ -421,6 +421,7 @@ func (p *Proxy) handleHeadObject(w http.ResponseWriter, r *http.Request, bucket,
 	w.Header().Set("Content-Type", metadata.ContentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(plaintext)))
 	w.Header().Set("ETag", plaintextETag)
+	w.Header().Set("Last-Modified", output.LastModified.UTC().Format(time.RFC1123))
 	w.WriteHeader(http.StatusOK)
 
 	return http.StatusOK, 0, nil
@@ -473,6 +474,7 @@ func (p *Proxy) handleGetObject(w http.ResponseWriter, r *http.Request, bucket, 
 	w.Header().Set("Content-Type", metadata.ContentType)
 	w.Header().Set("Content-Length", strconv.Itoa(len(plaintext)))
 	w.Header().Set("ETag", plaintextETag)
+	w.Header().Set("Last-Modified", output.LastModified.UTC().Format(time.RFC1123))
 	w.WriteHeader(http.StatusOK)
 
 	// Write decrypted content
